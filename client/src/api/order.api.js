@@ -9,7 +9,7 @@ export const addressApi = {
 
 export const orderApi = {
   createOrder: (payload) => client.post('/api/orders', payload),
-  getOrders: (params = {}) => client.get('/api/orders', { params }),
+  getOrders: (params = {}) => client.get('/api/orders', { params, preserveEnvelope: true }),
   getOrderByNumber: (orderNumber) => client.get(`/api/orders/${orderNumber}`),
   cancelOrder: (orderNumber) => client.put(`/api/orders/${orderNumber}/cancel`),
   requestRefund: (orderNumber, data) => client.post(`/api/orders/${orderNumber}/refund`, data),

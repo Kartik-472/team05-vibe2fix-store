@@ -88,8 +88,8 @@ export const AdminLayout = ({ children, title, subtitle }) => {
             <span>Storefront View</span>
           </Link>
           <button
-            onClick={() => {
-              logout();
+            onClick={async () => {
+              try { await logout(); } catch { window.alert('Sign out failed. Please retry.'); return; }
               navigate('/login');
             }}
             className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-status-danger hover:bg-bg-elevated rounded-2xl transition"

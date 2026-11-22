@@ -5,3 +5,5 @@ uploads/
 .env.local
 *.log
 .DS_Store
+
+/deploy/certs/

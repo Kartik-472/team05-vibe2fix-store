@@ -3,8 +3,29 @@ import { User, MapPin, Plus, Trash2, Edit2, Shield, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { addressApi } from '../api/order.api';
 
+import { authApi } from '../api/auth.api';
+
 export const ProfilePage = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
+  const [code, setCode] = useState('');
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const handleVerification = async (confirm) => {
+    setVerifying(true);
+    try {
+      if (confirm) {
+        await authApi.confirmCode(code.trim());
+        updateUser({ emailVerified: true });
+      } else {
+        await authApi.sendCode();
+        setVerificationMessage('Check your email for a code. It expires in 15 minutes.');
+      }
+    } catch (err) {
+      setVerificationMessage(err.response?.data?.message || 'Email verification failed. Please retry.');
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const [addresses, setAddresses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,6 +119,18 @@ export const ProfilePage = () => {
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
       
+      {!user?.emailVerified && (
+        <section className="space-y-3 rounded-2xl bg-bg-card p-6">
+          <h2 className="font-bold">Verify your email for welcome discounts</h2>
+          <button disabled={verifying} onClick={() => handleVerification(false)}>Send verification code</button>
+          <form className="flex gap-3" onSubmit={e => { e.preventDefault(); handleVerification(true); }}>
+            <input aria-label="Email verification code" placeholder="Code from your email" className="bg-bg-elevated p-2"
+              value={code} onChange={e => setCode(e.target.value)} required maxLength={24} />
+            <button disabled={verifying}>Verify email</button>
+          </form>
+          <p role="status">{verificationMessage}</p>
+        </section>
+      )}
       {/* Account Info Card */}
       <div className="bg-bg-card  rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
         <div className="flex items-center gap-4">

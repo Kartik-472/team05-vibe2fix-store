@@ -1,8 +1,9 @@
+const prisma = require('../config/db');
 const authService = require('../services/auth.service');
 
 const register = async (req, res) => {
   const result = await authService.register(req.body);
-  res.status(201).json({ data: result });
+  res.status(202).json({ data: result });
 };
 
 const login = async (req, res) => {
@@ -30,4 +31,9 @@ const updateProfile = async (req, res) => {
   res.status(200).json({ data: result });
 };
 
-module.exports = { register, login, me, forgotPassword, resetPassword, updateProfile };
+const logout = async (req, res) => {
+  await prisma.session.deleteMany({ where: { tokenHash: req.sessionTokenHash } });
+  res.sendStatus(204);
+};
+
+module.exports = { logout, register, login, me, forgotPassword, resetPassword, updateProfile };

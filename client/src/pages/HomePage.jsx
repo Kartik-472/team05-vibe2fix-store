@@ -20,7 +20,7 @@ export const HomePage = () => {
         ]);
 
         setCategories(catRes.data.categories || catRes.data || []);
-        setFeaturedProducts(prodRes.data.products || prodRes.data || []);
+        setFeaturedProducts(prodRes.data.data || []);
       } catch (err) {
         console.error('Error fetching homepage data', err);
       } finally {

@@ -17,15 +17,6 @@ client.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    const userRaw = localStorage.getItem('vibe2fix_user');
-    if (userRaw) {
-      try {
-        const u = JSON.parse(userRaw);
-        if (u && u.id) {
-          config.headers['x-trace-session-ref'] = u.id;
-        }
-      } catch (e) {}
-    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -34,6 +25,7 @@ client.interceptors.request.use(
 // Interceptor to normalize backend { data: ... } envelope and catch 401 session errors
 client.interceptors.response.use(
   (response) => {
+    if (response.config.preserveEnvelope) return response;
     if (response.data && response.data.data !== undefined) {
       const inner = response.data.data;
       if (Array.isArray(inner)) {

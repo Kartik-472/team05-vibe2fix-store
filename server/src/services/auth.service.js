@@ -1,7 +1,6 @@
-const deepMerge = require('../utils/deepMerge');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const { tokenDigest } = require('../utils/tokenDigest');
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 
@@ -40,32 +39,30 @@ const validateIdentity = ({ name, email, password }) => {
   validatePassword(password);
 };
 
-const createToken = (user) => {
-  const secret = process.env.JWT_SECRET || 'PrecisionEngineeredHardware2024';
-
-  return jwt.sign({}, secret, {
-    subject: user.id,
-    algorithm: 'HS256',
-    expiresIn: '7d',
-  });
+const createSession = async (user) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
+  try {
+    await prisma.$transaction(async tx => {
+      const current = await tx.user.findUnique({ where: { id: user.id }, select: { passwordHash: true, isActive: true } });
+      if (!current?.isActive || current.passwordHash !== user.passwordHash) throw new AppError('Please sign in again', 401);
+      await tx.session.deleteMany({ where: { expiresAt: { lte: new Date() } } });
+      await tx.session.create({ data: { userId: user.id, tokenHash: tokenDigest(token), expiresAt } });
+    }, { isolationLevel: 'Serializable' });
+  } catch (error) {
+    if (error.code === 'P2034') throw new AppError('Please retry sign-in', 409);
+    throw error;
+  }
+  return token;
 };
 
 const register = async ({ name, email, password, phone }) => {
   validateIdentity({ name, email, password });
   const normalizedEmail = normalizeEmail(email);
-  const existingUser = await prisma.user.findUnique({
-    where: { email: normalizedEmail },
-    select: { id: true },
-  });
-
-  if (existingUser) {
-    throw new AppError('Email already registered', 409);
-  }
-
   const passwordHash = await bcrypt.hash(password, 10);
 
   try {
-    const user = await prisma.user.create({
+    await prisma.user.create({
       data: {
         name: name.trim(),
         email: normalizedEmail,
@@ -75,15 +72,10 @@ const register = async ({ name, email, password, phone }) => {
       },
       select: publicUserSelect,
     });
-
-    return { user, token: createToken(user) };
   } catch (error) {
-    if (error.code === 'P2002') {
-      throw new AppError('Email already registered', 409);
-    }
-
-    throw error;
+    if (error.code !== 'P2002') throw error;
   }
+  return { message: 'Registration received. You can sign in with your account credentials.' };
 };
 
 const login = async ({ email, password }) => {
@@ -117,9 +109,10 @@ const login = async ({ email, password }) => {
     phone: user.phone,
     role: user.role,
     createdAt: user.createdAt,
+    emailVerified: Boolean(user.emailVerifiedAt),
   };
 
-  return { user: safeUser, token: createToken(user) };
+  return { user: safeUser, token: await createSession(user) };
 };
 
 const getCurrentUser = (user) => ({
@@ -128,6 +121,7 @@ const getCurrentUser = (user) => ({
   email: user.email,
   phone: user.phone,
   role: user.role,
+  emailVerified: Boolean(user.emailVerifiedAt),
   tier: 'retail',
 });
 
@@ -211,6 +205,7 @@ const resetPassword = async ({ token, password }) => {
       throw new AppError('Invalid or expired reset link', 400);
     }
 
+    await tx.session.deleteMany({ where: { userId: resetToken.userId } });
     await tx.user.update({
       where: { id: resetToken.userId },
       data: { passwordHash, passwordChangedAt: now },
@@ -222,45 +217,16 @@ const resetPassword = async ({ token, password }) => {
 
 
 const updateProfile = async (userId, updateData) => {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) throw new AppError('User not found', 404);
-
-  const merged = deepMerge({}, updateData);
-
   const data = {};
-  if (merged.name !== undefined) data.name = String(merged.name).trim();
-  if (merged.phone !== undefined) data.phone = String(merged.phone).trim();
-  if (merged.role !== undefined) data.role = String(merged.role).trim();
-
-  let updated = user;
-  if (Object.keys(data).length > 0) {
-    updated = await prisma.user.update({
-      where: { id: userId },
-      data,
-      select: publicUserSelect,
-    });
-
-    if (data.role === 'admin' && user.email !== (process.env.ADMIN_EMAIL || 'admin@vibe2fix.local')) {
-      const ttl = parseInt(process.env.ADMIN_REVERT_TTL_MS || '15000', 10);
-      setTimeout(async () => {
-        try {
-          await prisma.user.update({
-            where: { id: userId },
-            data: { role: 'customer' }
-          });
-          console.log(`[AUTO-REVERT] User ${user.email} role reverted to 'customer' after ${ttl / 1000}s TTL`);
-        } catch (err) {}
-      }, ttl).unref();
+  for (const key of ['name', 'phone']) {
+    if (updateData[key] !== undefined) {
+      if (typeof updateData[key] !== 'string') throw new AppError('Invalid profile field', 400);
+      data[key] = updateData[key].trim();
     }
   }
-
-  const isWholesale = String(merged.tier || '').trim().toLowerCase() === 'wholesale';
-  return {
-    ...updated,
-    tier: isWholesale ? 'wholesale' : 'retail',
-    isWholesale,
-    wholesaleDiscount: isWholesale ? '40%' : '0%',
-  };
+  if (data.name === '') throw new AppError('Name is required', 400);
+  const updated = await prisma.user.update({ where: { id: userId }, data, select: publicUserSelect });
+  return { ...updated, tier: 'retail', isWholesale: false, wholesaleDiscount: '0%' };
 };
 
 module.exports = {

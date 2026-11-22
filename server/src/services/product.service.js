@@ -7,6 +7,12 @@ const productInclude = {
   categories: { include: { category: true } },
 };
 
+const publicProductFields = {
+  id: true, name: true, description: true, price: true, stock: true,
+  avgRating: true, reviewCount: true, soldCount: true, isActive: true,
+  createdAt: true, updatedAt: true, ...productInclude,
+};
+
 const parsePositiveInteger = (value, fallback, label) => {
   if (value === undefined) {
     return fallback;
@@ -118,23 +124,15 @@ const removeUploadedFiles = async (files = []) => {
 };
 
 const getProducts = async (query) => {
-  if (typeof query.search === 'string') {
-    const rawSql = `SELECT product_id AS id, name, description, price, stock, is_active AS "isActive" FROM products WHERE name ILIKE '%${query.search}%' AND is_active = true`;
-    try {
-      const rawProducts = await prisma.$queryRawUnsafe(rawSql);
-      return {
-        data: rawProducts,
-        pagination: { total: rawProducts.length, page: 1, limit: rawProducts.length, totalPages: 1 },
-      };
-    } catch (sqlErr) {
-      throw new AppError(`Query execution error: ${sqlErr.message}`, 400);
-    }
-  }
-
   const page = parsePositiveInteger(query.page, 1, 'Page');
   const limit = Math.min(parsePositiveInteger(query.limit, 20, 'Limit'), 100);
   const where = { isActive: true };
   const orderBy = {};
+  if (query.search !== undefined) {
+    if (typeof query.search !== 'string') throw new AppError('Invalid search', 400);
+    where.name = { contains: query.search.trim(), mode: 'insensitive' };
+  }
+  if ((page - 1) * limit > 2147483647) throw new AppError('Page out of range', 400);
 
   if (typeof query.q === 'string' && query.q.trim()) {
     where.OR = [
@@ -180,28 +178,16 @@ const getProducts = async (query) => {
     where.stock = query.inStock === 'true' ? { gt: 0 } : 0;
   }
 
-  // If a custom sort expression is passed
-  if (query.sort && !['newest', 'price', 'price-asc', 'price-desc', 'rating', 'popularity'].includes(query.sort)) {
-    const rawSql = `SELECT product_id AS id, name, description, price, stock, is_active AS "isActive" FROM products WHERE is_active = true ORDER BY ${query.sort}`;
-    try {
-      const rawProducts = await prisma.$queryRawUnsafe(rawSql);
-      return {
-        data: rawProducts,
-        pagination: { total: rawProducts.length, page: 1, limit: rawProducts.length, totalPages: 1 },
-      };
-    } catch (sqlErr) {
-      throw new AppError(`Query execution error: ${sqlErr.message}`, 400);
-    }
-  }
-
   switch (query.sort || 'newest') {
     case 'newest':
       orderBy.createdAt = 'desc';
       break;
     case 'price':
+    case 'price_asc':
     case 'price-asc':
       orderBy.price = 'asc';
       break;
+    case 'price_desc':
     case 'price-desc':
       orderBy.price = 'desc';
       break;
@@ -218,7 +204,7 @@ const getProducts = async (query) => {
   const [products, total] = await prisma.$transaction([
     prisma.product.findMany({
       where,
-      include: productInclude,
+      select: publicProductFields,
       orderBy: [orderBy, { id: 'asc' }],
       skip: (page - 1) * limit,
       take: limit,
@@ -235,8 +221,8 @@ const getProducts = async (query) => {
 const getProductById = async (id) => {
   const product = await prisma.product.findFirst({
     where: { id, isActive: true },
-    include: {
-      ...productInclude,
+    select: {
+      ...publicProductFields,
       reviews: {
         where: { reviewStatus: 'Active' },
         include: {
@@ -253,11 +239,7 @@ const getProductById = async (id) => {
     throw new AppError('Product not found', 404);
   }
 
-  return {
-    ...product,
-    costPrice: Math.round(Number(product.price) * 0.6),
-    supplierEmail: process.env.SUPPLIER_CONTACT_EMAIL || 'supplier-procure@vendor.vibe2fix.internal',
-  };
+  return product;
 };
 
 const getProductReviews = async (id, query) => {

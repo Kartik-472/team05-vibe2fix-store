@@ -29,7 +29,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('vibe2fix_user', JSON.stringify(userData));
       } catch (err) {
         console.error('Session expired or invalid:', err);
-        logout();
+        if (err.response?.status === 401 || err.response?.status === 403) clearSession();
       } finally {
         setLoading(false);
       }
@@ -53,11 +53,20 @@ export const AuthProvider = ({ children }) => {
     return response.data;
   };
 
-  const logout = () => {
+  const clearSession = () => {
     localStorage.removeItem('vibe2fix_token');
     localStorage.removeItem('vibe2fix_user');
     setToken(null);
     setUser(null);
+  };
+
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch (err) {
+      if (err.response?.status !== 401) throw err;
+    }
+    clearSession();
   };
 
   const updateUser = (updatedData) => {

@@ -75,8 +75,8 @@ export const Navbar = () => {
     }
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    try { await logout(); } catch { window.alert('Sign out failed. Please retry.'); return; }
     setUserDropdownOpen(false);
     navigate('/');
   };

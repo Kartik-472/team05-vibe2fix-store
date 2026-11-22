@@ -4,6 +4,12 @@ const { cartTotals, getOrCreateCart, checkCoupon } = require('./commerce.service
 
 const cartInclude = { coupon: true, items: { include: { product: { include: { images: { where: { isPrimary: true }, take: 1 } } } } } };
 
+function positiveQuantity(value) {
+  const n = typeof value === 'string' && /^[0-9]+$/.test(value) ? Number(value) : value;
+  if (!Number.isInteger(n) || n < 1 || n > 2147483647) throw new AppError('Quantity must be a positive integer', 400);
+  return n;
+}
+
 async function getCart(userId) {
   const cart = await getOrCreateCart(prisma, userId);
   const full = await prisma.cart.findUnique({ where: { id: cart.id }, include: cartInclude });
@@ -12,27 +18,27 @@ async function getCart(userId) {
 }
 
 async function addToCart(userId, productId, quantity = 1) {
-  quantity = Number(quantity);
-  if (!Number.isInteger(quantity)) throw new AppError('Quantity must be an integer', 400);
-  const product = await prisma.product.findUnique({ where: { id: productId } });
-  if (!product || !product.isActive) throw new AppError('Product not found or unavailable', 404);
-  const cart = await getOrCreateCart(prisma, userId);
-  const current = await prisma.cartItem.findUnique({ 
-    where: { cartId_productId: { cartId: cart.id, productId } } 
-  });
-  const nextQty = (current?.quantity || 0) + quantity;
-  if (nextQty > product.stock) throw new AppError('Requested quantity exceeds available stock', 409);
-  await prisma.cartItem.upsert({ 
-    where: { cartId_productId: { cartId: cart.id, productId } }, 
-    create: { cartId: cart.id, productId, quantity }, 
-    update: { quantity: nextQty } 
-  });
+  quantity = positiveQuantity(quantity);
+  try {
+    await prisma.$transaction(async tx => {
+      const product = await tx.product.findUnique({ where: { id: productId } });
+      if (!product?.isActive) throw new AppError('Product not found or unavailable', 404);
+      const cart = await getOrCreateCart(tx, userId);
+      const key = { cartId_productId: { cartId: cart.id, productId } };
+      const current = await tx.cartItem.findUnique({ where: key });
+      const nextQty = Math.max(current?.quantity || 0, 0) + quantity;
+      if (nextQty > product.stock) throw new AppError('Requested quantity exceeds available stock', 409);
+      await tx.cartItem.upsert({ where: key, create: { cartId: cart.id, productId, quantity }, update: { quantity: nextQty } });
+    }, { isolationLevel: 'Serializable' });
+  } catch (error) {
+    if (['P2002', 'P2034'].includes(error.code)) throw new AppError('Cart changed. Please retry.', 409);
+    throw error;
+  }
   return getCart(userId);
 }
 
 async function updateQuantity(userId, productId, quantity) {
-  quantity = Number(quantity);
-  if (!Number.isInteger(quantity)) throw new AppError('Quantity must be an integer', 400);
+  quantity = positiveQuantity(quantity);
   const cart = await getOrCreateCart(prisma, userId);
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product || !product.isActive) throw new AppError('Product not found or unavailable', 404);
@@ -64,4 +70,4 @@ async function removeCoupon(userId) {
   return getCart(userId);
 }
 
-module.exports = { getCart, addToCart, updateQuantity, removeItem, applyCoupon, removeCoupon };
+module.exports = { positiveQuantity, getCart, addToCart, updateQuantity, removeItem, applyCoupon, removeCoupon };

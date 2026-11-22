@@ -1,5 +1,7 @@
 const AppError = require('../utils/AppError');
 
+const welcomeCodes = ['WELCOME_LIMITED', 'WELCOME50'];
+
 function calculateDiscount(coupon, subtotal) {
   if (!coupon) return 0;
   const value = Number(coupon.value);
@@ -22,6 +24,10 @@ async function checkCoupon(client, userId, code, subtotal) {
   const coupon = await client.coupon.findUnique({ where: { code: String(code).trim().toUpperCase() } });
   if (!coupon || !coupon.isActive || coupon.expiry <= new Date()) throw new AppError('Coupon is invalid or expired', 400);
   if (subtotal < Number(coupon.minOrder)) throw new AppError(`Minimum order amount is ${coupon.minOrder}`, 400);
+  if (welcomeCodes.includes(coupon.code)) {
+    const user = await client.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true } });
+    if (!user?.emailVerifiedAt) throw new AppError('Verify your email in your profile to redeem the welcome discount.', 403);
+  }
   const [used, count] = await Promise.all([
     client.couponUsage.findUnique({ where: { couponId_userId: { couponId: coupon.id, userId } } }),
     client.couponUsage.count({ where: { couponId: coupon.id } }),
@@ -31,4 +37,4 @@ async function checkCoupon(client, userId, code, subtotal) {
   return coupon;
 }
 
-module.exports = { calculateDiscount, cartTotals, getOrCreateCart, checkCoupon };
+module.exports = { welcomeCodes, calculateDiscount, cartTotals, getOrCreateCart, checkCoupon };

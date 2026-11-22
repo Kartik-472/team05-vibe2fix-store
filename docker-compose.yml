@@ -19,9 +19,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: "5000"
+      PUBLIC_HTTPS: ${PUBLIC_HTTPS:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      VERIFICATION_FROM: ${VERIFICATION_FROM:-}
       DATABASE_URL: postgresql://shop:shop@db:5432/vibe2fix
       ADMIN_EMAIL: admin@vibe2fix.local
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-LocalAdmin#2026}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set a strong ADMIN_PASSWORD before starting Compose}
     ports:
       - "127.0.0.1:8000:5000"   # 8000 on your machine (5000 is often taken on macOS)
     depends_on:
@@ -29,6 +33,22 @@ services:
         condition: service_healthy
     # Create the tables, load the demo data, then start the shop
     command: ["sh", "-c", "./node_modules/.bin/prisma db push --skip-generate && node prisma/seed.js && node src/server.js"]
+
+  https:
+    profiles: ["tls"]
+    image: nginx:stable-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      STORE_UPSTREAM: ${STORE_UPSTREAM:-app:5000}
+      NGINX_ENVSUBST_FILTER: "^(PUBLIC_HOST|STORE_UPSTREAM)$"
+    volumes:
+      - ./deploy/https.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
 
 volumes:
   db-data:

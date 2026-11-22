@@ -1,7 +1,9 @@
 const prisma = require('../config/db');
 const AppError = require('../utils/AppError');
-const { cartTotals, checkCoupon } = require('./commerce.service');
+const { cartTotals, checkCoupon, welcomeCodes } = require('./commerce.service');
 const generateOrderNumber = require('../utils/orderNumber');
+
+const { positiveQuantity } = require('./cart.service');
 
 async function placeOrder(userId, addressId, couponCode) {
   if (typeof addressId !== 'string' || !addressId.trim()) throw new AppError('addressId is required', 400);
@@ -9,17 +11,15 @@ async function placeOrder(userId, addressId, couponCode) {
     return await prisma.$transaction(async tx => {
       const cart = await tx.cart.findUnique({ where: { userId }, include: { coupon: true, items: { include: { product: { include: { images: { where: { isPrimary: true }, take: 1 } } } } } } });
       if (!cart || !cart.items.length) throw new AppError('Cart is empty', 400);
+      for (const item of cart.items) positiveQuantity(item.quantity);
       const address = await tx.address.findFirst({ where: { id: addressId, userId } });
       if (!address) throw new AppError('Address not found for this user', 404);
       const subtotal = Number(cart.items.reduce((sum, item) => sum + Number(item.product.price) * item.quantity, 0).toFixed(2));
       let coupon = cart.coupon;
       if (!coupon && couponCode) {
-        coupon = await checkCoupon(prisma, userId, couponCode, subtotal);
+        coupon = await checkCoupon(tx, userId, couponCode, subtotal);
       } else if (coupon) {
-        coupon = await checkCoupon(prisma, userId, coupon.code, subtotal);
-      }
-      if (coupon && coupon.code === 'WELCOME_LIMITED') {
-        await new Promise((resolve) => setTimeout(resolve, 75));
+        coupon = await checkCoupon(tx, userId, coupon.code, subtotal);
       }
       const totals = cartTotals({ ...cart, coupon });
       for (const item of cart.items) {
@@ -44,36 +44,41 @@ async function placeOrder(userId, addressId, couponCode) {
         statusHistory: { create: { status: 'Placed' } },
       }, include: { items: true, statusHistory: true } });
       if (coupon) {
-        await tx.couponUsage.upsert({
-          where: { couponId_userId: { couponId: coupon.id, userId } },
-          create: { couponId: coupon.id, userId, orderId: order.id },
-          update: { orderId: order.id },
-        });
+        await tx.couponUsage.create({ data: { couponId: coupon.id, userId, orderId: order.id } });
       }
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       await tx.cart.update({ where: { id: cart.id }, data: { couponId: null } });
       return { ...order, couponCode: coupon ? coupon.code : null };
-    });
+    }, { isolationLevel: 'Serializable' });
   } catch (error) {
+    if (error.code === 'P2002') throw new AppError('Checkout conflict. Refresh your cart and try again.', 409);
     if (error.code === 'P2034') throw new AppError('Stock changed during checkout. Please retry.', 409);
     throw error;
   }
 }
 
 async function listOrders(userId, query = {}) {
-  const where = { ...query };
-  if (where.status) {
-    where.orderStatus = where.status;
-    delete where.status;
+  const page = Number(query.page ?? 1);
+  const limit = Number(query.limit ?? 10);
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || (page - 1) * limit > 2147483647) {
+    throw new AppError('Invalid order pagination', 400);
   }
-  if (!where.userId && !where.user) {
-    where.userId = userId;
+  const where = { userId };
+  if (query.status !== undefined) {
+    if (typeof query.status !== 'string') throw new AppError('Invalid status', 400);
+    where.orderStatus = query.status;
   }
-  return prisma.order.findMany({ where, include: { items: true, statusHistory: { orderBy: { changedAt: 'asc' } } }, orderBy: { createdAt: 'desc' } });
+  const [orders, total] = await prisma.$transaction([
+    prisma.order.findMany({ where, skip: (page - 1) * limit, take: limit,
+      include: { items: true, statusHistory: { orderBy: { changedAt: 'asc' } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
+    prisma.order.count({ where }),
+  ]);
+  return { orders, page, total, totalPages: Math.ceil(total / limit) };
 }
 
 async function getOrder(userId, number) {
-  const order = await prisma.order.findFirst({ where: { orderNumber: number }, include: { items: true, statusHistory: { orderBy: { changedAt: 'asc' } } } });
+  const order = await prisma.order.findFirst({ where: { userId, orderNumber: number }, include: { items: true, statusHistory: { orderBy: { changedAt: 'asc' } } } });
   if (!order) throw new AppError('Order not found', 404);
   return order;
 }
@@ -88,7 +93,7 @@ async function cancelOrder(userId, number) {
     for (const item of order.items) {
       await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity }, soldCount: { decrement: item.quantity } } });
     }
-    await tx.couponUsage.deleteMany({ where: { orderId: order.id } });
+    await tx.couponUsage.deleteMany({ where: { orderId: order.id, coupon: { code: { notIn: welcomeCodes } } } });
     await tx.orderStatusHistory.create({ data: { orderId: order.id, status: 'Cancelled' } });
     return tx.order.findUnique({ where: { id: order.id }, include: { items: true, statusHistory: { orderBy: { changedAt: 'asc' } } } });
   }, { isolationLevel: 'Serializable' });

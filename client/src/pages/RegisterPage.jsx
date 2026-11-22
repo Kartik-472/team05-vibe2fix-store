@@ -75,7 +75,7 @@ export const RegisterPage = () => {
         {success && (
           <div className="mb-5 p-3.5 rounded-2xl bg-emerald-500/15 text-emerald-400 text-xs flex items-center gap-2.5">
             <CheckCircle className="w-4 h-4 flex-shrink-0" />
-            <span>Account created successfully! Redirecting to login...</span>
+            <span>Registration received. Continue to sign in.</span>
           </div>
         )}
 

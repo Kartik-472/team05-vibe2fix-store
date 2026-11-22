@@ -81,14 +81,14 @@ export const ProductListPage = () => {
           ...(filters.search && { search: filters.search }),
           ...(filters.category && { category: filters.category }),
           ...(filters.maxPrice && { maxPrice: filters.maxPrice }),
-          ...(filters.minRating && { minRating: filters.minRating }),
+          ...(filters.minRating && { rating: filters.minRating }),
           ...(filters.inStock && { inStock: true }),
         };
 
         const res = await productApi.getProducts(params);
-        const fetchedProducts = res.data.products || res.data || [];
+        const fetchedProducts = res.data.data || [];
         setProducts(fetchedProducts);
-        setTotalPages(res.data.totalPages || res.data.pages || 1);
+        setTotalPages(res.data.pagination?.pages || 1);
       } catch (err) {
         console.error('Failed to load products', err);
       } finally {

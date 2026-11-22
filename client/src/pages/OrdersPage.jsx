@@ -9,16 +9,18 @@ export const OrdersPage = () => {
   const [orders, setOrders] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchOrders = async (pageNum) => {
     try {
       setLoading(true);
+      setError(false);
       const res = await orderApi.getOrders({ page: pageNum, limit: 10 });
-      setOrders(res.data.orders || res.data || []);
+      setOrders(res.data.data);
       setTotalPages(res.data.totalPages || res.data.pages || 1);
     } catch (err) {
-      console.error('Failed to load orders', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -45,6 +47,8 @@ export const OrdersPage = () => {
             <div key={n} className="h-28 bg-bg-card  rounded-2xl animate-pulse" />
           ))}
         </div>
+      ) : error ? (
+        <p role="alert">Order history could not be loaded. <button onClick={() => fetchOrders(page)}>Try again</button></p>
       ) : orders.length > 0 ? (
         <div className="space-y-4">
           {orders.map((order) => {
